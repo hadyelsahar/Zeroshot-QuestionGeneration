@@ -1,4 +1,4 @@
-# NAACL-HLT 2018 submission code
+# A NAACL-HLT 2018 submission
 Code for anonymous submission to NAACL 2018 entitled 
 ## Zero-Shot Question Generation from Knowledge Graphs for Unseen Predicates and Entity Types
 
