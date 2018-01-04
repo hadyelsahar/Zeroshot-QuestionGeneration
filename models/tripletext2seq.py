@@ -9,16 +9,25 @@ import numpy as np
 
 class TripleText2SeqModel():
     """
-    This Model Triple + Textual contexts to sequence model:
+    This Model is called triples sequences to sequence model
+    model takes a single triple and multiple sequences as an input and outputs
+    a single sequence.
+
+    This model is equipped by two attention modules
+    - attention over the input triples
+    - attention over each encoded vector of each word in the
+    input sequences
 
     - Triple Encoder:
         - Entities Encoded through Entity Embeddings
         - Predicates Encoded Through Predicate Embeddings
-    - Textual contexts Encoder:
-        - RNN through Word Embeddings
+    - Sequences Encoder:
+        - a separate RNN over Word Embeddings of each input sequence
+
 
     Data preparation:
-    - This model doesn't handle Additional tokens `<unk> <rare> <pad>` those are expected to be added beforehand to the vocabulary
+    - Thise model doesn't handle Additional tokens `<unk> <rare> <pad>`
+    those are expected to be added beforehand to the vocabulary
     - vocabulary is created offline
     - The inputs to the decoder are preprocessed beforehand to start with  `<s>` and  `<\s>`
     - targets are decoder inputs shifted by one (to ignore start symbol)
@@ -28,29 +37,53 @@ class TripleText2SeqModel():
         print('Initializing new seq 2 seq model')
 
         assert mode in ['training', 'evaluation', 'inference']
+
         self.mode = mode
         self.config = config
+
         self.__create_placeholders()
         self.__create_encoder()
-
         self.__create_decoder()
 
     def __create_placeholders(self):
+        """
+        Function to create placeholders for each
+        :return:
+        """
 
-        # encoder_inputs : size [batch_size, triples_size(normally 3)]
+        # Encoder Inputs
+        #################
+
+        # Input Triple
+        ###############
+
+        # The input triple is given in the form of list of entities [sub,obj] and list of predicates [pred]
+        # This design allows also inputting multiple triples at once since order matters [s1,s2,o1,o2] [p1,p2]
         self.encoder_entities_inputs = tf.placeholder(tf.int32, shape=[None, self.config.ENTITIESLENGTH], name="encoder_entities_inputs")
         self.encoder_predicates_inputs = tf.placeholder(tf.int32, shape=[None, self.config.PREDICATESLENGTH], name="encoder_predicates_inputs")
         self.encoder_predicates_direction = tf.placeholder(tf.float32, shape=[None], name="encoder_predicates_direction")
 
-        # encoder_inputs_length: [batch_size]
+        # Input Sequences
+        # textual evidences = input sequences
+        ######################################
+
+        # input sequences with padding
+        # :size =  NUMBER_OF_TEXTUAL_EVIDENCES x BATCHSIZE x input sequence max length
         self.encoder_text_inputs = tf.placeholder(dtype=tf.int32, shape=[self.config.NUMBER_OF_TEXTUAL_EVIDENCES, None, None], name='encoder_text_inputs')
+        # actual lengths of each input sequence
+        # :size =  NUMBER_OF_TEXTUAL_EVIDENCES x 1
+        # each batch has a fixed input sequence length
         self.encoder_text_inputs_length = tf.placeholder(dtype=tf.int32, shape=[self.config.NUMBER_OF_TEXTUAL_EVIDENCES, None], name='encoder_text_inputs_length')
 
         self.batch_size = tf.shape(self.encoder_entities_inputs)[0]
 
         # Decoder placeholders:
-        # these are the raw inputs to the decoder:
+        # these are the raw inputs to the decoder same as input sequences
+        # output sequence with padding
+        # :size =  BATCHSIZE x output sequence max length
         self.decoder_inputs = tf.placeholder(tf.int32, shape=[None, None], name="decoder_inputs")
+        # number indicating actual lengths of the output sequence
+        # :size =  BATCHSIZE x 1
         self.decoder_inputs_length = tf.placeholder(dtype=tf.int32, shape=(None,), name='decoder_inputs_length')
 
         if self.mode == "training":
@@ -78,6 +111,10 @@ class TripleText2SeqModel():
     def __build_single_rnn_cell(self, hidden_size):
 
         cell = tf.nn.rnn_cell.GRUCell(hidden_size)
+
+        # if self.use_dropout:
+        #     cell = DropoutWrapper(cell, dtype=self.dtype,
+        #                           output_keep_prob=self.keep_prob_placeholder, )
 
         return cell
 
@@ -129,66 +166,102 @@ class TripleText2SeqModel():
 
         print('Building encoder in: ', time.time() - start, ' secs')
 
-    def __create_text_encoder(self):
-        print('building Types encoder ...')
+    def __create_seq_encoder(self):
+
+        print('Building Input Sequence Encoder ...')
         start = time.time()
 
         with tf.variable_scope('encoder'):
-            # Create Embeddings Weights
 
+            ###################
+            # Word Embeddings #
+            ###################
+            # Create Word Embeddings Weights
             if self.config.USE_PRETRAINED_WORD_EMBEDDINGS:
 
                 word_emb = pickle.load(open(self.config.PRETRAINED_WORD_EMBEDDINGS_PATH)).astype(np.float32)
-
-                self.encoder_word_embeddings = tf.Variable(word_emb, name="entities_embeddings",
+                self.encoder_word_embeddings = tf.Variable(word_emb, name="encoder_word_embeddings",
                                                            trainable=self.config.TRAIN_WORD_EMBEDDINGS)
 
             else:
-                self.encoder_word_embeddings = tf.get_variable("encoder_types_embeddings",
-                                                               shape=[self.config.DECODER_VOCAB_SIZE, self.config.TYPES_EMBEDDING_SIZE],
+                self.encoder_word_embeddings = tf.get_variable("encoder_word_embeddings",
+                                                               shape=[self.config.DECODER_VOCAB_SIZE,
+                                                                      self.config.INPUT_SEQ_EMBEDDING_SIZE],
                                                                initializer=self.__helper__initializer(),
                                                                dtype=tf.float32
                                                                )
-            # embedding the encoder inputs
-            # Encoder Input size = config.NUMBER_OF_TEXTUAL_EVIDENCES x Batchsize x input_length (variable)
-            # Embedded Input size =  config.NUMBER_OF_TEXTUAL_EVIDENCES x Batchsize x input_length (variable) x word_embeddings_size
-            self.encoder_text_inputs_embedded = tf.nn.embedding_lookup(self.encoder_word_embeddings, self.encoder_text_inputs)
 
-            # changing the dimensionality of embedded inputs into hidden size
-            # encoder_input_layer = Dense(self.config.HIDDEN_SIZE, dtype=tf.float32, name='encoder_input_projection')
-            # self.encoder_inputs_embedded = encoder_input_layer(encoder_inputs_embedded)
+            # Embedding the encoder inputs
+            # Encoder Input size = NUMBER_OF_TEXTUAL_EVIDENCES x BATCH x input_length
+            # Embedded Input size =  NUMBER_OF_TEXTUAL_EVIDENCES x BATCH x input_length x word_embeddings_size
+            self.encoder_text_inputs_embedded = tf.nn.embedding_lookup(self.encoder_word_embeddings,
+                                                                       self.encoder_text_inputs)
 
-            gru = self.__build_single_rnn_cell(self.config.TYPES_RNN_HIDDEN_SIZE)
+            #######
+            # RNN #
+            #######
 
             # building a multilayer RNN for each Textual Evidence
-            self.encoder_cell = []
-            for _ in range(self.config.NUMBER_OF_TEXTUAL_EVIDENCES):
-                self.encoder_cell.append(tf.nn.rnn_cell.MultiRNNCell([gru] * self.config.NUM_LAYERS))
-
             # Encode input sequences into context vectors:
             # encoder_outputs: [Num_text_evidence, batch_size, max_time_step, cell_output_size]
             # encoder_state: [Num_text_evidence, batch_size, cell_output_size]
+
             self.encoder_text_outputs = []
             self.encoder_text_last_state = []
 
-            for i in range(self.config.NUMBER_OF_TEXTUAL_EVIDENCES):
+            # If not bidirectional encoder
+            self.encoder_cell = []
 
-                out, state = tf.nn.dynamic_rnn(
-                    cell=self.encoder_cell[i],
-                    inputs=self.encoder_text_inputs_embedded[i],
-                    sequence_length=self.encoder_text_inputs_length[i],
-                    dtype=tf.float32
-                )
+            rnn = self.__build_single_rnn_cell(self.config.INPUT_SEQ_RNN_HIDDEN_SIZE)
 
-                self.encoder_text_outputs.append(out)
-                self.encoder_text_last_state.append(tf.squeeze(state, axis=0))
+            if "bi" not in self.config.ENCODER_RNN_CELL_TYPE:
+                    for _ in range(self.config.NUMBER_OF_TEXTUAL_EVIDENCES):
+                        #rnn = self.__build_single_rnn_cell(self.config.INPUT_SEQ_RNN_HIDDEN_SIZE)
+                        self.encoder_cell.append(tf.nn.rnn_cell.MultiRNNCell([rnn] * self.config.NUM_LAYERS))
+
+                    for i in range(self.config.NUMBER_OF_TEXTUAL_EVIDENCES):
+
+                        out, state = tf.nn.dynamic_rnn(
+                            cell=self.encoder_cell[i],
+                            inputs=self.encoder_text_inputs_embedded[i],
+                            sequence_length=self.encoder_text_inputs_length[i],
+                            dtype=tf.float32
+                        )
+
+                        self.encoder_text_outputs.append(out)
+                        self.encoder_text_last_state.append(tf.squeeze(state, axis=0))
+
+            # If bidirectional encoder
+            else:
+                self.fwd_encoder_cell = []
+                self.bw_encoder_cell = []
+                for _ in range(self.config.NUMBER_OF_TEXTUAL_EVIDENCES):
+                    # two rnn decoders for each layer for each input sequence\
+                    #fwrnn = self.__build_single_rnn_cell(self.config.INPUT_SEQ_RNN_HIDDEN_SIZE)
+                    #bwrnn = self.__build_single_rnn_cell(self.config.INPUT_SEQ_RNN_HIDDEN_SIZE)
+
+                    self.fwd_encoder_cell.append([rnn] * self.config.NUM_LAYERS)
+                    self.bw_encoder_cell.append([rnn] * self.config.NUM_LAYERS)
+
+                for i in range(self.config.NUMBER_OF_TEXTUAL_EVIDENCES):
+
+                    out, fwd_state, bk_state = tf.contrib.rnn.stack_bidirectional_dynamic_rnn(
+                        cells_fw=self.fwd_encoder_cell[i],
+                        cells_bw=self.bw_encoder_cell[i],
+                        inputs=self.encoder_text_inputs_embedded[i],
+                        sequence_length=self.encoder_text_inputs_length[i],
+                        dtype=tf.float32
+                    )
+
+                    self.encoder_text_outputs.append(tf.concat(out, 2))
+                    self.encoder_text_last_state.append(tf.squeeze(tf.concat([fwd_state, bk_state], 2), axis=0))
 
         print('Building encoder in: ', time.time() - start, ' secs')
 
     def __create_encoder(self):
 
         self.__create_triple_encoder()
-        self.__create_text_encoder()
+        self.__create_seq_encoder()
 
         # concatinating last state of the triple encoder with the last state of each text input being encoded
         last_states = [self.encoder_triples_last_state] + self.encoder_text_last_state
@@ -197,24 +270,20 @@ class TripleText2SeqModel():
 
     def __create_decoder_cell(self):
 
-        gru = tf.nn.rnn_cell.GRUCell(self.config.DECODER_RNN_HIDDEN_SIZE)
-
-        self.decoder_cell_list = [gru] * self.config.NUM_LAYERS
-
-        self.decoder_cell = tf.nn.rnn_cell.MultiRNNCell(self.decoder_cell_list)
+        self.decoder_cell = tf.nn.rnn_cell.GRUCell(self.config.DECODER_RNN_HIDDEN_SIZE)
 
         # fully connected layer to change size of Encoder Last state to Decoder Hidden size
         decoder_hidden_state_reshape = Dense(self.config.DECODER_RNN_HIDDEN_SIZE)
 
         self.decoder_initial_state = (decoder_hidden_state_reshape(self.encoder_last_state), )
 
-    def __create_decoder_attention_cell(self):
+
+    def __create_decoder_attention_cell_old(self):
         """
         create decoder RNN with attention
         :return:
         """
 
-        # concatinate the types embeddings vector with the
         memory = tf.concat([self.encoder_triples_inputs_embedded] + self.encoder_text_outputs, axis=1)
 
         self.attention_mechanism = tf.contrib.seq2seq.BahdanauAttention(
@@ -233,6 +302,64 @@ class TripleText2SeqModel():
             cell=self.decoder_cell_list[-1],
             attention_layer_size=self.config.DECODER_RNN_HIDDEN_SIZE,     # the output hidden size of the last decoder
             attention_mechanism=self.attention_mechanism,
+            initial_cell_state=decoder_hidden_state_reshape(self.encoder_last_state),
+            alignment_history=False,
+            name="Attention_Wrapper"
+        )
+
+        self.decoder_cell = tf.nn.rnn_cell.MultiRNNCell(self.decoder_cell_list)
+
+        # To be compatible with AttentionWrapper, the encoder last state
+        # of the top layer should be converted into the AttentionWrapperState form
+        # We can easily do this by calling AttentionWrapper.zero_state
+
+        # self.decoder_initial_state = self.encoder_last_state
+
+        init_state = self.decoder_cell_list[-1].zero_state(
+            batch_size=self.batch_size,
+            dtype=tf.float32
+        )
+
+        # a tuple because decode initial state has to take a tuple
+        self.decoder_initial_state = (init_state,)
+
+
+    def __create_decoder_attention_cell(self):
+        """
+        create decoder RNN with attention
+        :return:
+        """
+
+        triple_memory = self.encoder_triples_inputs_embedded
+
+        self.triple_attention_mechanism = tf.contrib.seq2seq.BahdanauAttention(
+            num_units=self.config.TRIPLES_EMBEDDING_SIZE,    # the depth of the Attention layer
+            memory=triple_memory,
+            name="TripleAttention"
+        )
+
+        context_memory = tf.concat(self.encoder_text_outputs, axis=1)
+
+        self.context_attention_mechanism = tf.contrib.seq2seq.BahdanauAttention(
+            num_units=self.config.INPUT_SEQ_RNN_HIDDEN_SIZE if "bi" not in self.config.ENCODER_RNN_CELL_TYPE
+            else self.config.INPUT_SEQ_RNN_HIDDEN_SIZE * 2,    # the depth of the Attention layer
+            memory=context_memory,
+            name="ContextAttention"
+        )
+
+        # create decoder cell:
+        gru = self.__build_single_rnn_cell(self.config.DECODER_RNN_HIDDEN_SIZE)
+        self.decoder_cell_list = [gru] * self.config.NUM_LAYERS
+
+        decoder_hidden_state_reshape = Dense(self.config.DECODER_RNN_HIDDEN_SIZE)
+
+        self.decoder_cell_list[-1] = tf.contrib.seq2seq.AttentionWrapper(
+            cell=self.decoder_cell_list[-1],
+            # the output hidden size of the last decoder
+            attention_layer_size=[self.config.TRIPLES_EMBEDDING_SIZE,
+                                  self.config.INPUT_SEQ_RNN_HIDDEN_SIZE if "bi" not in self.config.ENCODER_RNN_CELL_TYPE
+                                  else self.config.INPUT_SEQ_RNN_HIDDEN_SIZE * 2],
+            attention_mechanism=[self.triple_attention_mechanism, self.context_attention_mechanism],
             initial_cell_state=decoder_hidden_state_reshape(self.encoder_last_state),
             alignment_history=False,
             name="Attention_Wrapper"
@@ -287,7 +414,6 @@ class TripleText2SeqModel():
                 self.__create_decoder_attention_cell()
             else:
                 self.__create_decoder_cell()
-
 
             ######################################
             # Build the decoder in training mode #
