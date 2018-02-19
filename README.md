@@ -1,6 +1,7 @@
-# A NAACL-HLT 2018 submission
-Code for anonymous submission to NAACL 2018 entitled 
+# A NAACL-HLT 2018 ACCEPTED PUBLICATION 
 ## Zero-Shot Question Generation from Knowledge Graphs for Unseen Predicates and Entity Types
+### Authors Hady Elsahar, Christophe Gravier and Frederique Laforest.
+[Preprint](./Zeroshot_Question_Generation.pdf)
 
 *The Github Repo consists of the following folders*:
 
