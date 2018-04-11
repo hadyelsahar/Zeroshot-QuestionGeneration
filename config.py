@@ -53,8 +53,8 @@ class Config():
 
             if self.USE_PRETRAINED_KB_EMBEDDINGS:
 
-                self.PRETRAINED_ENTITIES_EMBEDDINGS_PATH = "./checkpoints/transe_old/ent_embeddings.pkl"
-                self.PRETRAINED_PREDICATES_EMBEDDINGS_PATH = "./checkpoints/transe_old/rel_embeddings.pkl"
+                self.PRETRAINED_ENTITIES_EMBEDDINGS_PATH = "./checkpoints/transe/ent_embeddings.pkl"
+                self.PRETRAINED_PREDICATES_EMBEDDINGS_PATH = "./checkpoints/transe/rel_embeddings.pkl"
                 # infer size from given pickle file
                 self.ENTITIES_VOCAB, self.ENTITIES_EMBEDDING_SIZE = pickle.load(open(self.PRETRAINED_ENTITIES_EMBEDDINGS_PATH)).shape
                 self.PREDICATES_VOCAB, self.PREDICATES_EMBEDDING_SIZE = pickle.load(open(self.PRETRAINED_PREDICATES_EMBEDDINGS_PATH)).shape
