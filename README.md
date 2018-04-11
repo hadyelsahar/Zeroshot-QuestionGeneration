@@ -14,6 +14,12 @@
 
 ## Running Model
 
+** Prep Repo ** 
+
+From the repository base folder run the script that downloads extra files and setup the repository 
+`. prepare_repo.sh`
+
+
 The file run.py takes some arguments described in the begining of the file and responsible for running training the our-models or the encoder-decoder baseline. 
 
 **Experiment params**:
